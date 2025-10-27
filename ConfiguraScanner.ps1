@@ -557,12 +557,40 @@ catch {
 Write-Host ""
 Write-Host "===============================================" -ForegroundColor Cyan
 Write-Host "    CONFIGURAZIONE COMPLETATA" -ForegroundColor Cyan
+# Rileva indirizzo IP del computer
+Write-Host "[INFO] Rilevamento indirizzo IP..." -ForegroundColor Yellow
+try {
+    # Metodo 1: Ottieni IP dell'interfaccia di rete attiva
+    $NetworkAdapter = Get-NetAdapter | Where-Object { $_.Status -eq "Up" -and $_.MediaType -eq "802.3" } | Select-Object -First 1
+    if ($NetworkAdapter) {
+        $IPAddress = (Get-NetIPAddress -InterfaceIndex $NetworkAdapter.InterfaceIndex -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike "169.254.*" -and $_.IPAddress -ne "127.0.0.1" }).IPAddress
+    }
+    
+    # Metodo 2: Fallback con WMI se il primo metodo fallisce
+    if (-not $IPAddress) {
+        $IPAddress = (Get-WmiObject -Class Win32_NetworkAdapterConfiguration | Where-Object { $_.DefaultIPGateway -ne $null }).IPAddress | Where-Object { $_ -notlike "169.254.*" -and $_ -ne "127.0.0.1" } | Select-Object -First 1
+    }
+    
+    # Metodo 3: Ultimo fallback con Test-Connection
+    if (-not $IPAddress) {
+        $IPAddress = (Test-Connection -ComputerName $env:COMPUTERNAME -Count 1).IPV4Address.IPAddressToString
+    }
+    
+    if (-not $IPAddress) {
+        $IPAddress = "Non rilevato"
+    }
+}
+catch {
+    $IPAddress = "Errore rilevamento"
+}
+
 Write-Host "===============================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "RIEPILOGO CONFIGURAZIONE:" -ForegroundColor White
 Write-Host "-------------------------" -ForegroundColor White
 Write-Host "Cartella scansioni: $ScanFolder" -ForegroundColor Yellow
 Write-Host "Condivisione di rete: \\$env:COMPUTERNAME\Scansioni" -ForegroundColor Yellow
+Write-Host "Indirizzo IP computer: $IPAddress" -ForegroundColor Yellow
 
 if ($DomainMode) {
     Write-Host "Modalita: Dominio ($CurrentDomain)" -ForegroundColor Yellow
@@ -583,6 +611,8 @@ Write-Host ""
 Write-Host "INFORMAZIONI PER LO SCANNER:" -ForegroundColor White
 Write-Host "---------------------------" -ForegroundColor White
 Write-Host "Percorso di rete: \\$env:COMPUTERNAME\Scansioni" -ForegroundColor Cyan
+Write-Host "Percorso IP alternativo: \\$IPAddress\Scansioni" -ForegroundColor Cyan
+Write-Host "Indirizzo IP: $IPAddress" -ForegroundColor Cyan
 
 if ($DomainMode) {
     Write-Host "Username: $CurrentDomain\$ScanUser" -ForegroundColor Cyan
