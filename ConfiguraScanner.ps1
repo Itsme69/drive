@@ -403,21 +403,34 @@ else {
 
 # STEP 3: Impostazione permessi NTFS
 Write-Host ""
-Write-Host "[STEP 3] Configurazione permessi NTFS" -ForegroundColor Cyan
+Write-Host "[STEP 3] Configurazione permessi NTFS (Blindati)" -ForegroundColor Cyan
 
 try {
+    # Identifica l'utente corrente che sta eseguendo lo script
+    $CurrentUserIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    Write-Host "[INFO] Utente corrente rilevato: $CurrentUserIdentity" -ForegroundColor Yellow
+    
+    # 1. Imposta proprietario
+    Write-Host "[INFO] Impostazione proprietario cartella: $CurrentUserIdentity..." -ForegroundColor Yellow
+    icacls $ScanFolder /setowner "$CurrentUserIdentity" /T | Out-Null
+
+    # 2. Resetta e disabilita ereditarietà, rimuovendo tutti i permessi ereditati (/inheritance:r)
+    #    Concede Full Control all'utente corrente
+    Write-Host "[INFO] Rimozione permessi ereditati e assegnazione controllo completo a $CurrentUserIdentity..." -ForegroundColor Yellow
+    icacls $ScanFolder /inheritance:r /grant "${CurrentUserIdentity}:(OI)(CI)F" /T | Out-Null
+    
     if ($DomainMode) {
-        Write-Host "[INFO] Impostazione permessi NTFS per utente dominio..." -ForegroundColor Yellow
-        icacls $ScanFolder /grant "${CurrentDomain}\${ScanUser}:(OI)(CI)F" /T | Out-Null
-        icacls $ScanFolder /grant "Everyone:(OI)(CI)RX" /T | Out-Null
-        icacls $ScanFolder /grant "Authenticated Users:(OI)(CI)M" /T | Out-Null
+        Write-Host "[INFO] Aggiunta permessi Modifica per utente scanner (Dominio)..." -ForegroundColor Yellow
+        # Utente Scanner (Dominio): Modifica (M) -> Lettura/Scrittura
+        icacls $ScanFolder /grant "${CurrentDomain}\${ScanUser}:(OI)(CI)M" /T | Out-Null
     }
     else {
-        Write-Host "[INFO] Impostazione permessi NTFS per utente locale..." -ForegroundColor Yellow
-        icacls $ScanFolder /grant "${ScanUser}:(OI)(CI)F" /T | Out-Null
-        icacls $ScanFolder /grant "Everyone:(OI)(CI)RX" /T | Out-Null
+        Write-Host "[INFO] Aggiunta permessi Modifica per utente scanner (Locale)..." -ForegroundColor Yellow
+        # Utente Scanner (Locale): Modifica (M) -> Lettura/Scrittura
+        icacls $ScanFolder /grant "${ScanUser}:(OI)(CI)M" /T | Out-Null
     }
-    Write-Host "[OK] Permessi NTFS configurati" -ForegroundColor Green
+    
+    Write-Host "[OK] Permessi NTFS configurati: Solo $CurrentUserIdentity e Scanner hanno accesso" -ForegroundColor Green
 }
 catch {
     Write-Host "[ATTENZIONE] Possibili problemi con i permessi NTFS: $($_.Exception.Message)" -ForegroundColor Yellow
@@ -436,15 +449,22 @@ catch {
     # Ignora errori se la condivisione non esiste
 }
 
-Write-Host "[INFO] Creazione nuova condivisione..." -ForegroundColor Yellow
+Write-Host "[INFO] Creazione nuova condivisione con accesso ristretto..." -ForegroundColor Yellow
 try {
+    # Per la condivisione, dobbiamo assicurarci che l'utente corrente sia incluso
+    if (-not $CurrentUserIdentity) {
+        $CurrentUserIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    }
+
     if ($DomainMode) {
-        New-SmbShare -Name "Scansioni" -Path $ScanFolder -FullAccess "${CurrentDomain}\${ScanUser}" -ReadAccess "Everyone" | Out-Null
+        # Share permissions: Full Control to Current User and Scanner ONLY
+        New-SmbShare -Name "Scansioni" -Path $ScanFolder -FullAccess @("${CurrentDomain}\${ScanUser}", "$CurrentUserIdentity") | Out-Null
     }
     else {
-        New-SmbShare -Name "Scansioni" -Path $ScanFolder -FullAccess $ScanUser -ReadAccess "Everyone" | Out-Null
+        # Share permissions: Full Control to Current User and Scanner ONLY
+        New-SmbShare -Name "Scansioni" -Path $ScanFolder -FullAccess @("$ScanUser", "$CurrentUserIdentity") | Out-Null
     }
-    Write-Host "[OK] Condivisione creata con successo" -ForegroundColor Green
+    Write-Host "[OK] Condivisione creata (Accesso: $CurrentUserIdentity, Scanner)" -ForegroundColor Green
 }
 catch {
     Write-ErrorAndExit "Impossibile creare la condivisione: $($_.Exception.Message)"
